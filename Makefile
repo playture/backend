@@ -1,5 +1,5 @@
 include .env
-MIGRATE=migrate -path=migration -database "$(PRIMARY_DATABASE_HOST)" -verbose
+MIGRATE=migrate -path=migration -database "$(DATABASE_URL)" -verbose
 
 devtools:
 	@echo "Installing devtools"
