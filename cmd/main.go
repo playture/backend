@@ -32,7 +32,8 @@ func main() {
 		log.Fatalf("redis error %s\n", err)
 	}
 	defer rdis.Close()
-
+	boot := wireApp(env, logger, pg, rdis)
+	boot.Boot()
 }
 
 func initSlogLogger() *slog.Logger {
