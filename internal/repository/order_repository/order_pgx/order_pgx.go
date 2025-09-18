@@ -2,13 +2,15 @@ package order_pgx
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/playture/backend/internal/entity"
 	"github.com/playture/backend/internal/infrastructure/postgresql"
 	orderRepository "github.com/playture/backend/internal/repository/order_repository"
-	"log/slog"
+	"github.com/playture/backend/utils"
 )
 
 const (
@@ -25,10 +27,18 @@ const (
 			$13,$14,$15,$16,
 			$17,$18,$19,$20,$21,
 			$22,$23
-		) RETURNING id
-	`
+		) RETURNING id`
 
 	deleteOrder = "DELETE FROM orders WHERE id = $1"
+
+	updateQuery = `
+		UPDATE orders
+		SET job_id=$2, user_email=$3, user_name=$4, stripe_payment_intent_id=$5, stripe_customer_id=$6,
+			amount=$7, currency=$8, payment_status=$9, paid_at=$10, order_type=$11, requirements=$12,
+			production_job_id=$13, production_status=$14, delivery_method=$15, delivered_at=$16,
+			customer_notes=$17, support_ticket_id=$18, ip_address=$19, user_agent=$20, expires_at=$21,
+			updated_at=$22
+		WHERE id=$1`
 )
 
 type OrderPgx struct {
@@ -46,7 +56,12 @@ func NewOrderPgx(
 	}
 }
 
-func (o *OrderPgx) Create(ctx context.Context, order *entity.Order, tx pgx.Tx) (string, error) {
+func (o *OrderPgx) Create(
+	ctx context.Context,
+	order *entity.Order,
+	tx pgx.Tx,
+) (string, error) {
+	lg := o.logger.With("method", "Create")
 
 	var id string
 	err := tx.QueryRow(ctx, createOrder,
@@ -58,14 +73,16 @@ func (o *OrderPgx) Create(ctx context.Context, order *entity.Order, tx pgx.Tx) (
 	).Scan(&id)
 
 	if err != nil {
-		o.logger.Error("failed to insert order", "error", err)
-		return "", err
+		lg.Error("failed to insert order", "err", err)
+		return "", utils.WrapError("insert order", err)
 	}
 
 	return id, nil
 }
 
 func (o *OrderPgx) FindByField(ctx context.Context, field string, value interface{}, tx pgx.Tx) (*entity.Order, error) {
+	lg := o.logger.With("method", "FindByField")
+
 	query := fmt.Sprintf("SELECT * FROM orders WHERE %s = $1 LIMIT 1", field)
 
 	row := tx.QueryRow(ctx, query, value)
@@ -77,16 +94,19 @@ func (o *OrderPgx) FindByField(ctx context.Context, field string, value interfac
 		&order.CustomerNotes, &order.SupportTicketID, &order.IPAddress, &order.UserAgent, &order.ExpiresAt,
 		&order.CreatedAt, &order.UpdatedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, orderRepository.ErrOrderNotFound
 		}
-		return nil, err
+		lg.Error("failed to scan order", "err", err)
+		return nil, utils.WrapError("find order by field", err)
 	}
 
 	return &order, nil
 }
 
 func (o *OrderPgx) List(ctx context.Context, paymentStatus *entity.PaymentStatus, productionStatus *entity.ProductionStatus, limit, offset int, tx pgx.Tx) ([]*entity.Order, error) {
+	lg := o.logger.With("method", "List")
+
 	query := "SELECT * FROM orders WHERE 1=1"
 	args := []interface{}{}
 	argIdx := 1
@@ -108,7 +128,8 @@ func (o *OrderPgx) List(ctx context.Context, paymentStatus *entity.PaymentStatus
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		lg.Error("failed to list orders", "err", err)
+		return nil, utils.WrapError("list orders", err)
 	}
 	defer rows.Close()
 
@@ -122,7 +143,8 @@ func (o *OrderPgx) List(ctx context.Context, paymentStatus *entity.PaymentStatus
 			&order.CustomerNotes, &order.SupportTicketID, &order.IPAddress, &order.UserAgent, &order.ExpiresAt,
 			&order.CreatedAt, &order.UpdatedAt,
 		); err != nil {
-			return nil, err
+			lg.Error("failed to scan order", "err", err)
+			return nil, utils.WrapError("scan order row", err)
 		}
 		orders = append(orders, &order)
 	}
@@ -131,9 +153,12 @@ func (o *OrderPgx) List(ctx context.Context, paymentStatus *entity.PaymentStatus
 }
 
 func (o *OrderPgx) Delete(ctx context.Context, id string, tx pgx.Tx) error {
+	lg := o.logger.With("method", "Delete")
+
 	cmd, err := tx.Exec(ctx, deleteOrder, id)
 	if err != nil {
-		return err
+		lg.Error("failed to delete order", "id", id, "err", err)
+		return utils.WrapError("delete order", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return orderRepository.ErrOrderNotFound
@@ -142,27 +167,24 @@ func (o *OrderPgx) Delete(ctx context.Context, id string, tx pgx.Tx) error {
 }
 
 func (o *OrderPgx) Update(ctx context.Context, order *entity.Order, tx pgx.Tx) error {
-	query := `
-		UPDATE orders
-		SET job_id=$2, user_email=$3, user_name=$4, stripe_payment_intent_id=$5, stripe_customer_id=$6,
-			amount=$7, currency=$8, payment_status=$9, paid_at=$10, order_type=$11, requirements=$12,
-			production_job_id=$13, production_status=$14, delivery_method=$15, delivered_at=$16,
-			customer_notes=$17, support_ticket_id=$18, ip_address=$19, user_agent=$20, expires_at=$21,
-			created_at=$22, updated_at=$23
-		WHERE id=$1
-	`
+	lg := o.logger.With("method", "Update")
+
+	query := updateQuery
+
 	cmd, err := tx.Exec(ctx, query,
 		order.ID, order.JobID, order.UserEmail, order.UserName, order.StripePaymentIntentID, order.StripeCustomerID,
 		order.Amount, order.Currency, order.PaymentStatus, order.PaidAt, order.OrderType, order.Requirements,
 		order.ProductionJobID, order.ProductionStatus, order.DeliveryMethod, order.DeliveredAt,
 		order.CustomerNotes, order.SupportTicketID, order.IPAddress, order.UserAgent, order.ExpiresAt,
-		order.CreatedAt, order.UpdatedAt,
+		order.UpdatedAt,
 	)
 	if err != nil {
-		return err
+		lg.Error("failed to update order", "id", order.ID, "err", err)
+		return utils.WrapError("update order", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return orderRepository.ErrOrderNotFound
 	}
+
 	return nil
 }
