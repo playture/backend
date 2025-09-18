@@ -32,7 +32,9 @@ services:
     image: redis:8.0-M02-alpine
     container_name: playture-redis
     command: >
-      redis-server --user myuser on >SuperSecret123 ~* +@all
+      sh -c "echo 'user default off' > /data/users.acl &&
+             echo 'user myuser on >SuperSecret123 allcommands allkeys' >> /data/users.acl &&
+             redis-server --aclfile /data/users.acl"
     ports:
       - "6320:6379"
 

@@ -61,3 +61,47 @@ CREATE TABLE jobs (
     updated_at BIGINT NOT NULL
 );
 
+CREATE TABLE orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    -- Reference to original sample job
+    job_id UUID NOT NULL REFERENCES jobs(id),
+
+    -- User information
+    user_email TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+
+    -- Payment information
+    stripe_payment_intent_id TEXT,
+    stripe_customer_id TEXT,
+    amount NUMERIC(10, 2) NOT NULL,
+    currency TEXT DEFAULT 'usd',
+    payment_status SMALLINT NOT NULL DEFAULT 1,
+    paid_at BIGINT,
+
+    -- Order details
+    order_type SMALLINT NOT NULL DEFAULT 1,
+    requirements TEXT,
+
+    -- Production job tracking
+    production_job_id UUID,
+    production_status SMALLINT NOT NULL DEFAULT 1,
+    delivery_method SMALLINT NOT NULL DEFAULT 1,
+    delivered_at BIGINT,
+
+    -- Customer service
+    customer_notes TEXT,
+    support_ticket_id TEXT,
+
+    -- Metadata
+    ip_address VARCHAR(64),
+    user_agent TEXT,
+
+    -- Timestamps
+    expires_at BIGINT,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+);
+
+
+

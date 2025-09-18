@@ -24,10 +24,10 @@ db-migrate-down:
 	$(MIGRATE) down
 
 build:
-	go build -o ./bin/$(APP_NAME) ./cmd/
+	go build -o ./bin/backend ./cmd/
 
 run:build
-	bin/$(APP_NAME)
+	./bin/backend
 
 wire:
 	wire ./cmd/
