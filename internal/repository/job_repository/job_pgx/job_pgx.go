@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/playture/backend/utils"
 	"log/slog"
 	"strings"
 
@@ -16,7 +17,7 @@ import (
 )
 
 const (
-	insertJob = `
+	CreateQuery = `
 		INSERT INTO jobs (
 			user_email, user_name, input_image_url, input_image_s3_key, style,
 			status, veo_video_url, veo_video_s3_key, veo_duration,
@@ -35,10 +36,47 @@ const (
 			$23, $24, $25, $26, $27,
 			$28, $29, $30, $31,
 			$32, $33
-		) RETURNING id
-	`
+		) RETURNING id`
 
-	deleteJob = `DELETE FROM jobs WHERE id = $1`
+	deleteQuery = `DELETE FROM jobs WHERE id = $1`
+
+	findByFieldQuery = `SELECT 
+		id, user_email, user_name, input_image_url, input_image_s3_key, style,
+		status, veo_video_url, veo_video_s3_key, veo_duration,
+		que_job_id, que_job_status, final_video_url, final_video_s3_key,
+		final_video_duration, final_video_size, signed_url, signed_url_expiry,
+		email_sent, email_sent_at, error_message, error_stack, retry_count,
+		ip_address, user_agent, started_at, completed_at, total_processing_time,
+		converted_to_order, order_id, content_moderated, content_moderation_result,
+		created_at, updated_at
+		FROM jobs WHERE %s = $1 LIMIT 1`
+
+	updateQuery = `
+		UPDATE jobs SET
+			user_email=$2, user_name=$3, input_image_url=$4, input_image_s3_key=$5, style=$6,
+			status=$7, veo_video_url=$8, veo_video_s3_key=$9, veo_duration=$10,
+			que_job_id=$11, que_job_status=$12, final_video_url=$13, final_video_s3_key=$14,
+			final_video_duration=$15, final_video_size=$16, signed_url=$17, signed_url_expiry=$18,
+			email_sent=$19, email_sent_at=$20, error_message=$21, error_stack=$22, retry_count=$23,
+			ip_address=$24, user_agent=$25, started_at=$26, completed_at=$27, total_processing_time=$28,
+			converted_to_order=$29, order_id=$30, content_moderated=$31, content_moderation_result=$32,
+			updated_at=$33
+		WHERE id=$1`
+
+	listQuery = `
+		SELECT 
+			id, user_email, user_name, input_image_url, input_image_s3_key, style,
+			status, veo_video_url, veo_video_s3_key, veo_duration,
+			que_job_id, que_job_status, final_video_url, final_video_s3_key,
+			final_video_duration, final_video_size, signed_url, signed_url_expiry,
+			email_sent, email_sent_at, error_message, error_stack, retry_count,
+			ip_address, user_agent, started_at, completed_at, total_processing_time,
+			converted_to_order, order_id, content_moderated, content_moderation_result,
+			created_at, updated_at
+		FROM jobs
+		%s
+		ORDER BY %s %s
+		LIMIT $%d OFFSET $%d`
 )
 
 type JobPgx struct {
@@ -61,8 +99,8 @@ func (j *JobPgx) Create(
 	job *entity.Job,
 	tx pgx.Tx,
 ) (string, error) {
+	lg := j.logger.With("method", "Create")
 	var id string
-	query := insertJob
 
 	args := []interface{}{
 		job.UserEmail, job.UserName, job.InputImageURL, job.InputImageS3Key, job.Style,
@@ -77,15 +115,15 @@ func (j *JobPgx) Create(
 
 	var err error
 	if tx != nil {
-		err = tx.QueryRow(ctx, query, args...).Scan(&id)
+		err = tx.QueryRow(ctx, CreateQuery, args...).Scan(&id)
 	} else {
-		err = j.postgres.PrimaryConn.QueryRow(ctx, query, args...).Scan(&id)
+		err = j.postgres.PrimaryConn.QueryRow(ctx, CreateQuery, args...).Scan(&id)
 	}
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok {
-			j.logger.Error("Create failed", "pgErr", pgErr.Message)
+			lg.Error("Create failed", "pgErr", pgErr.Message)
 		}
-		return "", err
+		return "", utils.WrapError("create job", err)
 	}
 	return id, nil
 }
@@ -95,17 +133,19 @@ func (j *JobPgx) Delete(
 	id string,
 	tx pgx.Tx,
 ) error {
+	lg := j.logger.With("method", "Delete")
 	var err error
 	if tx != nil {
-		_, err = tx.Exec(ctx, deleteJob, id)
+		_, err = tx.Exec(ctx, deleteQuery, id)
 	} else {
-		_, err = j.postgres.PrimaryConn.Exec(ctx, deleteJob, id)
+		_, err = j.postgres.PrimaryConn.Exec(ctx, deleteQuery, id)
 	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return jobRepository.ErrJobNotFound
 		}
-		return err
+		lg.Error("Delete failed", "id", id, "err", err)
+		return utils.WrapError("delete job", err)
 	}
 	return nil
 }
@@ -116,16 +156,8 @@ func (j *JobPgx) FindByField(
 	value interface{},
 	tx pgx.Tx,
 ) (*entity.Job, error) {
-	query := fmt.Sprintf(`SELECT 
-		id, user_email, user_name, input_image_url, input_image_s3_key, style,
-		status, veo_video_url, veo_video_s3_key, veo_duration,
-		que_job_id, que_job_status, final_video_url, final_video_s3_key,
-		final_video_duration, final_video_size, signed_url, signed_url_expiry,
-		email_sent, email_sent_at, error_message, error_stack, retry_count,
-		ip_address, user_agent, started_at, completed_at, total_processing_time,
-		converted_to_order, order_id, content_moderated, content_moderation_result,
-		created_at, updated_at
-		FROM jobs WHERE %s = $1 LIMIT 1`, field)
+	lg := j.logger.With("method", "FindByField")
+	query := fmt.Sprintf(findByFieldQuery, field)
 
 	var row pgx.Row
 	if tx != nil {
@@ -147,61 +179,49 @@ func (j *JobPgx) FindByField(
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, jobRepository.ErrJobNotFound
+			return nil, utils.WrapError("FindByFiled", jobRepository.ErrJobNotFound)
 		}
-		return nil, err
+		lg.Error("FindByField failed", "err", err)
+		return nil, utils.WrapError("FindByField job", err)
 	}
 	return job, nil
 }
-
 func (j *JobPgx) Update(
 	ctx context.Context,
 	job *entity.Job,
 	tx pgx.Tx,
 ) error {
-	// Collect fields dynamically
-	fields := []string{}
-	args := []interface{}{}
-	i := 1
+	lg := j.logger.With("method", "Update")
 
-	addField := func(name string, value interface{}) {
-		if value != nil && value != "" {
-			fields = append(fields, fmt.Sprintf("%s=$%d", name, i))
-			args = append(args, value)
-			i++
-		}
+	args := []interface{}{
+		job.ID, job.UserEmail, job.UserName, job.InputImageURL, job.InputImageS3Key, job.Style,
+		job.Status, job.VeoVideoURL, job.VeoVideoS3Key, job.VeoDuration,
+		job.QueJobID, job.QueJobStatus, job.FinalVideoURL, job.FinalVideoS3Key,
+		job.FinalVideoDuration, job.FinalVideoSize, job.SignedURL, job.SignedURLExpiry,
+		job.EmailSent, job.EmailSentAt, job.ErrorMessage, job.ErrorStack, job.RetryCount,
+		job.IPAddress, job.UserAgent, job.StartedAt, job.CompletedAt, job.TotalProcessingTime,
+		job.ConvertedToOrder, job.OrderID, job.ContentModerated, job.ContentModerationResult,
+		job.UpdatedAt,
 	}
 
-	addField("status", job.Status)
-	addField("veo_video_url", job.VeoVideoURL)
-	addField("veo_video_s3_key", job.VeoVideoS3Key)
-	addField("final_video_url", job.FinalVideoURL)
-	addField("final_video_s3_key", job.FinalVideoS3Key)
-	addField("final_video_duration", job.FinalVideoDuration)
-	addField("final_video_size", job.FinalVideoSize)
-	addField("error_message", job.ErrorMessage)
-	addField("error_stack", job.ErrorStack)
-	addField("updated_at", job.UpdatedAt)
+	var (
+		cmd pgconn.CommandTag
+		err error
+	)
 
-	if len(fields) == 0 {
-		return nil
-	}
-
-	query := fmt.Sprintf("UPDATE jobs SET %s WHERE id=$%d", strings.Join(fields, ", "), i)
-	args = append(args, job.ID)
-
-	var err error
 	if tx != nil {
-		_, err = tx.Exec(ctx, query, args...)
+		cmd, err = tx.Exec(ctx, updateQuery, args...)
 	} else {
-		_, err = j.postgres.PrimaryConn.Exec(ctx, query, args...)
+		cmd, err = j.postgres.PrimaryConn.Exec(ctx, updateQuery, args...)
 	}
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return jobRepository.ErrJobNotFound
-		}
-		return err
+		lg.Error("Update failed", "id", job.ID, "err", err)
+		return utils.WrapError("update job", err)
 	}
+	if cmd.RowsAffected() == 0 {
+		return utils.WrapError("update job", jobRepository.ErrJobNotFound)
+	}
+
 	return nil
 }
 
@@ -215,7 +235,6 @@ func (j *JobPgx) List(ctx context.Context,
 ) ([]*entity.Job, error) {
 	lg := j.logger.With("method", "List")
 
-	// Default order
 	if orderBy == "" {
 		orderBy = "created_at"
 	}
@@ -224,7 +243,6 @@ func (j *JobPgx) List(ctx context.Context,
 		direction = "DESC"
 	}
 
-	// Build WHERE clause
 	where := ""
 	args := []interface{}{}
 	if len(statuses) > 0 {
@@ -236,25 +254,10 @@ func (j *JobPgx) List(ctx context.Context,
 		where = fmt.Sprintf("WHERE status IN (%s)", strings.Join(placeholders, ", "))
 	}
 
-	// Pagination
 	offset := (page - 1) * limit
 	args = append(args, limit, offset)
 
-	query := fmt.Sprintf(`
-		SELECT 
-			id, user_email, user_name, input_image_url, input_image_s3_key, style,
-			status, veo_video_url, veo_video_s3_key, veo_duration,
-			que_job_id, que_job_status, final_video_url, final_video_s3_key,
-			final_video_duration, final_video_size, signed_url, signed_url_expiry,
-			email_sent, email_sent_at, error_message, error_stack, retry_count,
-			ip_address, user_agent, started_at, completed_at, total_processing_time,
-			converted_to_order, order_id, content_moderated, content_moderation_result,
-			created_at, updated_at
-		FROM jobs
-		%s
-		ORDER BY %s %s
-		LIMIT $%d OFFSET $%d
-	`, where, orderBy, direction, len(args)-1, len(args))
+	query := fmt.Sprintf(listQuery, where, orderBy, direction, len(args)-1, len(args))
 
 	var rows pgx.Rows
 	var err error
@@ -264,7 +267,7 @@ func (j *JobPgx) List(ctx context.Context,
 		rows, err = j.postgres.PrimaryConn.Query(ctx, query, args...)
 	}
 	if err != nil {
-		return nil, err
+		return nil, utils.WrapError("failed to Query against database", err)
 	}
 	defer rows.Close()
 
@@ -282,13 +285,13 @@ func (j *JobPgx) List(ctx context.Context,
 			&job.CreatedAt, &job.UpdatedAt,
 		)
 		if err != nil {
-			return nil, err
+			return nil, utils.WrapError("failed to scan row", err)
 		}
 		jobs = append(jobs, job)
 	}
 
 	if len(jobs) == 0 {
-		return nil, jobRepository.ErrJobNotFound
+		return nil, utils.WrapError("list", jobRepository.ErrJobNotFound)
 	}
 
 	lg.Info("fetched jobs", "count", len(jobs))
