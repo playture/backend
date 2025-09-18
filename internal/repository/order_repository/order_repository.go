@@ -12,7 +12,7 @@ var (
 )
 
 type Repository interface {
-	Create(ctx context.Context, card *entity.Order, tx pgx.Tx) error
+	Create(ctx context.Context, card *entity.Order, tx pgx.Tx) (string, error)
 	FindByField(ctx context.Context, field string, value interface{}, tx pgx.Tx) (*entity.Order, error)
 	Delete(ctx context.Context, id string, tx pgx.Tx) error
 	Update(ctx context.Context, card *entity.Order, tx pgx.Tx) error
