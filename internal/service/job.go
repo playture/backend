@@ -4,6 +4,8 @@ import (
 	"context"
 	"github.com/playture/backend/internal/dto"
 	"github.com/playture/backend/internal/entity"
+	jobRepository "github.com/playture/backend/internal/repository/job_repository"
+	orderRepository "github.com/playture/backend/internal/repository/order_repository"
 	"log/slog"
 )
 
@@ -14,13 +16,19 @@ type Job interface {
 }
 
 type job struct {
-	logger *slog.Logger
+	logger    *slog.Logger
+	jobRepo   jobRepository.Repository
+	orderRepo orderRepository.Repository
 }
 
 func NewJob(logger *slog.Logger,
+	jobRepo jobRepository.Repository,
+	orderRepo orderRepository.Repository,
 ) Job {
 	return &job{
-		logger: logger.With("layer", "servuce"),
+		logger:    logger.With("layer", "servuce"),
+		jobRepo:   jobRepo,
+		orderRepo: orderRepo,
 	}
 }
 
